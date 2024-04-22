@@ -22,11 +22,11 @@ import easyocr
 nltk.download('stopwords')
 nltk.download('punkt')
 
-df = pd.read_csv("/content/training_set_rel3.tsv", sep='\t', encoding='ISO-8859-1')
+df = pd.read_csv("/content/training_set.tsv", sep='\t', encoding='ISO-8859-1')
 df.dropna(axis=1, inplace=True)
 df.drop(columns=['domain1_score', 'rater1_domain1', 'rater2_domain1'], inplace=True, axis=1)
 
-temp = pd.read_csv("/content/Processed_data - Processed_data.csv.csv")
+temp = pd.read_csv("/content/Data_csv.csv")
 temp.drop("Unnamed: 0", inplace=True, axis=1)
 df['domain1_score'] = temp['final_score']
 
@@ -163,7 +163,7 @@ def score_text(text, model, lstm_model, num_features):
     rounded_score = int(np.around(score_prediction[0][0]))  # Extract a single element from the array
     
     # Define the dictionary of essay explanations based on dataset's explanations
-    processed_data = pd.read_csv("/content/Processed_data - Processed_data.csv.csv")
+    processed_data = pd.read_csv("/content/Data_csv.csv")
     essay_explanations = dict(zip(processed_data['final_score'], processed_data['explanation']))
     
     # Retrieve explanation based on the predicted score
@@ -185,7 +185,7 @@ def makeVec(words, model, num_features):
     return vec
 
 # Define the dictionary of essay explanations
-processed_data = pd.read_csv("/content/Processed_data - Processed_data.csv.csv")
+processed_data = pd.read_csv("/content/Data_csv.csv")
 essay_explanations = dict(zip(processed_data['final_score'], processed_data['explanation']))
 
 image_path = "image path here"  # Set the correct path to your image
