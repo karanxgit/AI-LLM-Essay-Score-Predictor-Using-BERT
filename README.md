@@ -129,11 +129,3 @@ This AI + LLM-based essay scorer successfully predicts essay scores with high ac
 🚀 Happy Coding! 🚀  
 
 ---
-
-### **🔹 Next Steps**
-Would you like:  
-- **GitHub Actions for CI/CD?**  
-- **A Streamlit-based UI for essay scoring?**  
-- **Deployment as a web API (Flask/FastAPI)?**  
-
-Let me know! 🚀
