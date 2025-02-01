@@ -50,7 +50,7 @@ nltk.download('punkt')
 ## **📌 Usage**
 1️⃣ **Clone the repository**  
 ```bash
-git clone https://github.com/yourusername/AI_LLM_Essay_Scorer.git
+git clone https://github.com/karanxgit/AI_LLM_Essay_Scorer.git
 cd AI_LLM_Essay_Scorer
 ```
   
@@ -119,10 +119,6 @@ This AI + LLM-based essay scorer successfully predicts essay scores with high ac
 🔹 Testing additional AI models (e.g., Transformers, T5)  
 🔹 Deploying the model via a **Flask/Streamlit web app**  
 
----
-
-## **📜 License**
-This project is licensed under the **MIT License**.
 
 ---
 
