@@ -1,4 +1,3 @@
-# AI + LLM-Based Automated Essay Scoring
 # 📝 AI + LLM-Based Automated Essay Scoring 🚀
 
 ## Overview
