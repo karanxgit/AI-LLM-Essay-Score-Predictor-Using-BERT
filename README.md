@@ -1,6 +1,6 @@
 ---
 
-# 📝 AI + LLM-Based Automated Essay Scoring  
+# 📝 AI-Powered Automated Essay Scoring & Explanation System 
 
 This project aims to **automate essay scoring** by leveraging **Artificial Intelligence (AI) and Large Language Models (LLM)**.  
 By using **BERT embeddings, an LSTM model for scoring, and GPT-powered explanations**, the system can analyze essays, **predict scores**, and provide **constructive feedback**.  
