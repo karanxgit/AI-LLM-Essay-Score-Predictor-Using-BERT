@@ -1,97 +1,141 @@
-!pip install nltk gensim keras sklearn easyocr opencv-python-headless
-!pip install transformers torch datasets
+!pip install transformers torch datasets scikit-learn numpy pandas
 
 import numpy as np
 import pandas as pd
-import nltk
-import re
-import cv2
-import easyocr
-import os
 import torch
-from keras.models import Sequential
-from keras.layers import LSTM, Dense, Dropout
-from transformers import BertTokenizer, BertModel, pipeline
+import torch.nn as nn
+import random
+from transformers import DistilBertTokenizer, DistilBertModel, pipeline
 from sklearn.model_selection import train_test_split
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
-
-# Download necessary NLTK resources
-nltk.download('stopwords')
-nltk.download('punkt')
+from sklearn.feature_extraction.text import TfidfVectorizer
+from torch.optim import Adam
+from torch.utils.data import Dataset, DataLoader
 
 # Load dataset
-df = pd.read_csv("/content/training_set.tsv", sep='\t', encoding='ISO-8859-1')
-df.dropna(axis=1, inplace=True)
-df.drop(columns=['domain1_score', 'rater1_domain1', 'rater2_domain1'], inplace=True)
-
-# Load additional data containing scores
-temp = pd.read_csv("/content/Data_csv.csv")
-temp.drop("Unnamed: 0", inplace=True, axis=1)
-df['domain1_score'] = temp['final_score']
+df = pd.read_csv("/content/Data_csv.csv")
+df.drop("Unnamed: 0", inplace=True, axis=1)
 
 # Split data into training and testing sets
-y = df['domain1_score']
-df.drop('domain1_score', inplace=True, axis=1)
-X = df
+y = df['final_score']
+X = df[['essay']]
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
 
 # Convert essays to lists
 train_essays = X_train['essay'].tolist()
 test_essays = X_test['essay'].tolist()
 
-# Load BERT tokenizer and model
-bert_tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-bert_model = BertModel.from_pretrained("bert-base-uncased")
+# Load DistilBERT tokenizer and model
+tokenizer = DistilBertTokenizer.from_pretrained("distilbert-base-uncased")
+distilbert = DistilBertModel.from_pretrained("distilbert-base-uncased")
 
-# Function to preprocess and tokenize text
-stop_words = set(stopwords.words('english'))
-
-def preprocess_text(text):
-    text = re.sub("[^A-Za-z]", " ", text).lower()
-    words = text.split()
-    return [w for w in words if w not in stop_words]
-
-# Function to convert text into BERT embeddings
 def get_bert_embedding(text):
-    inputs = bert_tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=512)
+    inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=512)
     with torch.no_grad():
-        outputs = bert_model(**inputs)
-    return outputs.last_hidden_state.mean(dim=1).numpy()
+        outputs = distilbert(**inputs)
+    return outputs.last_hidden_state[:, 0, :].squeeze().numpy()  # CLS token output
 
-# Convert essays into BERT embeddings
-train_vectors = np.array([get_bert_embedding(essay) for essay in train_essays])
-test_vectors = np.array([get_bert_embedding(essay) for essay in test_essays])
+# Select 3000 random essays from training set for BERT embeddings
+sample_size = 3000
+random_indices = random.sample(range(len(train_essays)), sample_size)
+sampled_essays = [train_essays[i] for i in random_indices]
 
-# Reshape data for LSTM model
-train_vectors = np.reshape(train_vectors, (train_vectors.shape[0], 1, train_vectors.shape[2]))
-test_vectors = np.reshape(test_vectors, (test_vectors.shape[0], 1, test_vectors.shape[2]))
+sampled_train_vectors = np.array([get_bert_embedding(essay) for essay in sampled_essays])
 
-# Define LSTM model
-def get_model():
-    model = Sequential()
-    model.add(LSTM(300, dropout=0.4, recurrent_dropout=0.4, input_shape=(1, 768), return_sequences=True))
-    model.add(LSTM(64, recurrent_dropout=0.4))
-    model.add(Dropout(0.5))
-    model.add(Dense(1, activation='relu'))
-    model.compile(loss='mean_squared_error', optimizer='rmsprop', metrics=['mae'])
-    return model
+!pip install torchmetrics
+
+from torchmetrics.regression import MeanAbsoluteError
+# Use TF-IDF for all essays
+vectorizer = TfidfVectorizer(max_features=768)
+tfidf_train_vectors = vectorizer.fit_transform(train_essays).toarray()
+full_train_vectors = np.zeros((len(train_essays), 768))
+for idx, essay in enumerate(train_essays):
+    if idx in random_indices:
+        bert_idx = list(random_indices).index(idx)
+        full_train_vectors[idx] = sampled_train_vectors[bert_idx]
+    else:
+        full_train_vectors[idx, :] = tfidf_train_vectors[idx]
+
+y_train_tensor = torch.tensor(y_train.values, dtype=torch.float32).view(-1, 1)
+
+class EssayDataset(Dataset):
+    def __init__(self, features, labels):
+        self.features = torch.tensor(features, dtype=torch.float32)
+        self.labels = labels
+
+    def __len__(self):
+        return len(self.features)
+
+    def __getitem__(self, idx):
+        return self.features[idx], self.labels[idx]
+
+train_dataset = EssayDataset(full_train_vectors, y_train_tensor)
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+
+class DistilBERTRegressor(nn.Module):
+    def __init__(self):
+        super(DistilBERTRegressor, self).__init__()
+        self.fc1 = nn.Linear(768, 256)
+        self.dropout = nn.Dropout(0.3)
+        self.fc2 = nn.Linear(256, 128)
+        self.fc3 = nn.Linear(128, 1)  # Output single score
+
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = torch.relu(self.fc2(x))
+        return self.fc3(x)
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = DistilBERTRegressor().to(device)
+criterion = nn.MSELoss()
+
+mae_metric = MeanAbsoluteError().to(device)
+optimizer = Adam(model.parameters(), lr=0.0003)
 
 # Train the model
-lstm_model = get_model()
-lstm_model.fit(train_vectors, y_train, batch_size=64, epochs=50)  
-lstm_model.save('/content/final_lstm.h5')
+epochs = 75
+for epoch in range(epochs):
+    model.train()
+    epoch_loss = 0
+
+    for features, labels in train_loader:
+        features, labels = features.to(device), labels.to(device)
+
+        optimizer.zero_grad()
+        predictions = model(features)
+        loss = criterion(predictions, labels)
+        loss.backward()
+        optimizer.step()
+
+        epoch_loss += loss.item()
+
+    avg_loss = epoch_loss / len(train_loader)
+    mae_score = mae_metric(predictions, labels)
+    print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}, MAE: {mae_score:.4f}")
+
+
+    # Save the best model
+    torch.save(model.state_dict(), "/content/best_distilbert_model.pth")
+
+print("Training complete! Best model saved.")
+
 
 # Load pre-trained GPT model for explanation generation
 generator = pipeline("text-generation", model="gpt2")
 
-# Function to predict score and generate explanation
 def score_text(text):
     essay_vector = get_bert_embedding(text)
-    essay_vector = np.reshape(essay_vector, (1, 1, 768))
+    essay_vector = torch.tensor(essay_vector, dtype=torch.float32).to(device)
+    essay_vector = essay_vector.view(1, -1)
+
+    with torch.no_grad():
+        score_prediction = model(essay_vector).cpu().item()
+
+    # Ensure score is between 0-10
+    score_prediction = max(0, min(score_prediction, 10))
     
-    score_prediction = lstm_model.predict(essay_vector)
-    rounded_score = int(np.around(score_prediction[0][0]))
+    # Round to two decimal places
+    rounded_score = round(score_prediction, 2)
 
     # Generate explanation dynamically
     prompt = f"The essay received a score of {rounded_score}. Explain the strengths and weaknesses."
@@ -99,63 +143,11 @@ def score_text(text):
 
     return rounded_score, explanation
 
-# Function to extract text from image (OCR)
-def extract_text_with_easyocr(image_path):
-    image = cv2.imread(image_path)
-    if image is None:
-        return ""
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    reader = easyocr.Reader(['en'], gpu=False)
-    result = reader.readtext(gray, detail=0)
-    return " ".join(result)
+direct_text ="""Your essay goes here"""
 
-# Functions to extract text from different file formats
-from PyPDF2 import PdfReader
-from docx import Document
-
-def extract_text_from_pdf(pdf_path):
-    reader = PdfReader(pdf_path)
-    return " ".join([page.extract_text() for page in reader.pages if page.extract_text()])
-
-def extract_text_from_docx(docx_path):
-    doc = Document(docx_path)
-    return " ".join([paragraph.text for paragraph in doc.paragraphs])
-
-def extract_text_from_txt(txt_path):
-    with open(txt_path, 'r', encoding='utf-8') as file:
-        return file.read().strip()
-
-# Function to process different input types
-def process_input(file_path=None, direct_text=None):
-    extracted_text = ""
-
-    if direct_text:
-        extracted_text = direct_text
-    elif file_path and os.path.exists(file_path):
-        if file_path.lower().endswith(('.jpg', '.jpeg', '.png')):
-            extracted_text = extract_text_with_easyocr(file_path)
-        elif file_path.lower().endswith('.pdf'):
-            extracted_text = extract_text_from_pdf(file_path)
-        elif file_path.lower().endswith('.docx'):
-            extracted_text = extract_text_from_docx(file_path)
-        elif file_path.lower().endswith('.txt'):
-            extracted_text = extract_text_from_txt(file_path)
-        else:
-            print("Unsupported file type.")
-    return extracted_text
-
-# Example usage
-file_path = "/content/sample_essays_to_test.txt"  # Replace with actual file path
-direct_text = "Insert essay text here."  # Or replace with actual essay text
-
-if direct_text or file_path:
-    extracted_text = process_input(file_path=file_path, direct_text=direct_text)
-
-    if extracted_text:
-        predicted_score, explanation = score_text(extracted_text)
-        print("Predicted Score:", predicted_score)
-        print("Explanation:", explanation)
-    else:
-        print("No text extracted or provided.")
+if direct_text:
+    predicted_score, explanation = score_text(direct_text)
+    print("Predicted Score:", predicted_score)
+    print("Explanation:", explanation)
 else:
-    print("Please provide either a valid file path or direct text input.")
+    print("Please provide valid text input.")
